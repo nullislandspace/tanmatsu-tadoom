@@ -41,7 +41,9 @@ static boolean sound_inited = false;
 
 #define SAMPLECOUNT 256
 #define MAX_CHANNELS 32
-#define AUDIO_SAMPLE_RATE 22050
+/* BSP hardcodes I2S to 44100 Hz (badge_bsp_audio.c ignores the rate
+ * parameter).  Match that here so SFX pitch is correct. */
+#define AUDIO_SAMPLE_RATE 44100
 
 int snd_samplerate = AUDIO_SAMPLE_RATE;
 
@@ -93,17 +95,36 @@ static int current_midi_len = 0;
 /* External BSP audio function */
 extern void bsp_audio_initialize(uint32_t rate);
 
+/* Stop a channel. If called from the mixer (audio task, Core 1), only
+ * NULL the data pointer - do NOT call W_UnlockLumpNum because the zone
+ * allocator has no thread safety. The lump unlock is deferred to
+ * stopchan_and_unlock() which runs on the game thread. */
 static void stopchan(int i)
 {
     if (channelinfo[i].data) {
         channelinfo[i].data = NULL;
+        /* W_UnlockLumpNum intentionally omitted here for thread safety.
+         * The lump stays locked (PU_STATIC) until the channel is reused
+         * by addsfx(), which calls stopchan_and_unlock() first. */
+    }
+}
+
+/* Full stop + unlock, safe to call from game thread only. */
+static void stopchan_and_unlock(int i)
+{
+    if (channelinfo[i].data) {
+        channelinfo[i].data = NULL;
+    }
+    /* Unlock even if data was already NULL'd by the mixer */
+    if (channelinfo[i].id) {
         W_UnlockLumpNum(S_sfx[channelinfo[i].id].lumpnum);
+        channelinfo[i].id = 0;
     }
 }
 
 static int addsfx(int sfxid, int channel, const unsigned char *data, size_t len)
 {
-    stopchan(channel);
+    stopchan_and_unlock(channel);
 
     channelinfo[channel].data = data;
     channelinfo[channel].enddata = channelinfo[channel].data + len - 1;
@@ -216,7 +237,7 @@ void I_StopSound(int handle)
     if ((handle < 0) || (handle >= MAX_CHANNELS))
         return;
     xSemaphoreTake(audio_mutex, portMAX_DELAY);
-    stopchan(handle);
+    stopchan_and_unlock(handle);
     xSemaphoreGive(audio_mutex);
 }
 

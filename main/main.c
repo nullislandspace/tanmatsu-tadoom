@@ -210,7 +210,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting DOOM engine...");
 
     /* Set up argc/argv for PrBoom */
-    static const char *doom_argv[] = {"tadoom", "-iwad", TADOOM_BASE_PATH "/doom1.wad", "-nosound", NULL};
+    static const char *doom_argv[] = {"tadoom", "-iwad", TADOOM_BASE_PATH "/doom1.wad", "-nomusic", NULL};
     myargc = 4;
     myargv = doom_argv;
 
