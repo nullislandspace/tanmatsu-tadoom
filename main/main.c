@@ -91,9 +91,8 @@ void I_Init(void)
 
 void I_SafeExit(int rc)
 {
-    ESP_LOGE(TAG, "I_SafeExit called with rc=%d", rc);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    esp_restart();
+    ESP_LOGI(TAG, "I_SafeExit called with rc=%d, returning to launcher", rc);
+    bsp_device_restart_to_launcher();
 }
 
 static void I_Quit(void) __attribute__((unused));
