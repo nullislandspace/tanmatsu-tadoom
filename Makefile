@@ -59,11 +59,11 @@ badgelink:
 .PHONY: install
 install: build
 install:
-	cd badgelink/tools; ./badgelink.sh appfs upload application "template application" 0 ../../$(BUILD)/application.bin
+	cd badgelink/tools; ./badgelink.sh appfs upload tanmatsu-tadoom "TaDoom" 0 ../../$(BUILD)/tanmatsu-tadoom.bin
 
 .PHONY: run
 run:
-	cd badgelink/tools; ./badgelink.sh start application
+	cd badgelink/tools; ./badgelink.sh start tanmatsu-tadoom
 
 # Preparation
 
