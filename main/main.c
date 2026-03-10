@@ -1,273 +1,208 @@
+/* main.c -- TaDOOM entry point for Tanmatsu (ESP32-P4) */
+
 #include <stdio.h>
+#include <string.h>
+#include "config.h"
 #include "bsp/device.h"
 #include "bsp/display.h"
 #include "bsp/input.h"
-#include "bsp/led.h"
 #include "bsp/power.h"
-#include "custom_certificates.h"
 #include "driver/gpio.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_types.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "hal/lcd_types.h"
 #include "nvs_flash.h"
 #include "pax_fonts.h"
 #include "pax_gfx.h"
 #include "pax_text.h"
-#include "portmacro.h"
-#include "wifi_connection.h"
-#include "wifi_remote.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "sdcard.h"
 
-// Constants
-static char const TAG[] = "main";
+/* PrBoom headers */
+#include "doomdef.h"
+#include "m_argv.h"
+#include "d_main.h"
+#include "m_fixed.h"
+#include "i_system.h"
+#include "i_video.h"
+#include "z_zone.h"
+#include "lprintf.h"
+#include "m_random.h"
+#include "doomstat.h"
+#include "g_game.h"
+#include "m_misc.h"
+#include "i_sound.h"
+#include "i_main.h"
+#include "r_fps.h"
 
-// Global variables
-static size_t                       display_h_res        = 0;
-static size_t                       display_v_res        = 0;
-static lcd_color_rgb_pixel_format_t display_color_format = LCD_COLOR_PIXEL_FORMAT_RGB565;
-static lcd_rgb_data_endian_t        display_data_endian  = LCD_RGB_DATA_ENDIAN_LITTLE;
-static pax_buf_t                    fb                   = {0};
-static QueueHandle_t                input_event_queue    = NULL;
+static const char *TAG = "tadoom";
 
-#if defined(CONFIG_BSP_TARGET_KAMI)
-// Temporary addition for supporting epaper devices (irrelevant for Tanmatsu)
-static pax_col_t palette[] = {0xffffffff, 0xff000000, 0xffff0000};  // white, black, red
-#endif
+/* Display state - shared with i_video_tanmatsu.c */
+size_t display_h_res = 0;
+size_t display_v_res = 0;
+lcd_color_rgb_pixel_format_t display_color_format = LCD_COLOR_PIXEL_FORMAT_RGB888;
+lcd_rgb_data_endian_t display_data_endian = LCD_RGB_DATA_ENDIAN_LITTLE;
+pax_buf_t pax_framebuffer = {0};
+QueueHandle_t input_event_queue = NULL;
 
-void blit(void) {
-    bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&fb));
+/* PrBoom globals */
+int realtic_clock_rate = 100;
+static int_64_t I_GetTime_Scale = 1 << 24;
+unsigned int endoom_mode = 0;
+
+static int I_GetTime_Scaled(void)
+{
+    return (int)((int_64_t)I_GetTime_RealTime() * I_GetTime_Scale >> 24);
 }
 
-void app_main(void) {
-    // Start the GPIO interrupt service
+static int I_GetTime_FastDemo(void)
+{
+    static int fasttic;
+    return fasttic++;
+}
+
+static int I_GetTime_Error(void)
+{
+    I_Error("I_GetTime_Error: GetTime() used before initialization");
+    return 0;
+}
+
+int (*I_GetTime)(void) = I_GetTime_Error;
+
+void I_Init(void)
+{
+    if (fastdemo)
+        I_GetTime = I_GetTime_FastDemo;
+    else if (realtic_clock_rate != 100) {
+        I_GetTime_Scale = ((int_64_t)realtic_clock_rate << 24) / 100;
+        I_GetTime = I_GetTime_Scaled;
+    } else
+        I_GetTime = I_GetTime_RealTime;
+
+    if (!(nomusicparm && nosfxparm))
+        I_InitSound();
+
+    R_InitInterpolation();
+}
+
+void I_SafeExit(int rc)
+{
+    ESP_LOGE(TAG, "I_SafeExit called with rc=%d", rc);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_restart();
+}
+
+static void I_Quit(void) __attribute__((unused));
+static void I_Quit(void)
+{
+    if (demorecording)
+        G_CheckDemoStatus();
+    M_SaveDefaults();
+}
+
+static void doom_task(void *arg)
+{
+    ESP_LOGI(TAG, "Starting D_DoomMain...");
+    D_DoomMain();
+    ESP_LOGI(TAG, "D_DoomMain returned (unexpected)");
+    vTaskDelay(portMAX_DELAY);
+}
+
+void app_main(void)
+{
+    esp_err_t res;
+
+    /* GPIO ISR service */
     gpio_install_isr_service(0);
 
-    // Initialize the Non Volatile Storage partition
-    esp_err_t res = nvs_flash_init();
+    /* NVS */
+    res = nvs_flash_init();
     if (res == ESP_ERR_NVS_NO_FREE_PAGES || res == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        res = nvs_flash_erase();
-        if (res != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to erase NVS flash: %d", res);
-            return;
-        }
+        nvs_flash_erase();
         res = nvs_flash_init();
     }
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize NVS flash: %d", res);
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(res));
         return;
     }
 
-    // Initialize the Board Support Package
-    const bsp_configuration_t bsp_configuration = {
-        .display =
-            {
-                .requested_color_format = LCD_COLOR_PIXEL_FORMAT_RGB888,
-                .num_fbs                = 1,
-            },
+    /* BSP initialization with RGB888 display */
+    const bsp_configuration_t bsp_config = {
+        .display = {
+            .requested_color_format = LCD_COLOR_PIXEL_FORMAT_RGB888,
+            .num_fbs = 1,
+        },
     };
-    res = bsp_device_initialize(&bsp_configuration);
+    res = bsp_device_initialize(&bsp_config);
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize BSP: %d", res);
+        ESP_LOGE(TAG, "BSP init failed: %s", esp_err_to_name(res));
         return;
     }
 
-    // Get display parameters and rotation
-    res = bsp_display_get_parameters(&display_h_res, &display_v_res, &display_color_format, &display_data_endian);
+    /* Get display parameters */
+    res = bsp_display_get_parameters(&display_h_res, &display_v_res,
+                                     &display_color_format, &display_data_endian);
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get display parameters: %d", res);
+        ESP_LOGE(TAG, "Display params failed: %s", esp_err_to_name(res));
         return;
     }
+    ESP_LOGI(TAG, "Display: %ux%u", (unsigned)display_h_res, (unsigned)display_v_res);
 
-    // Convert ESP-IDF color format into PAX buffer type
-    pax_buf_type_t format = PAX_BUF_24_888RGB;
-    switch (display_color_format) {
-        case LCD_COLOR_PIXEL_FORMAT_RGB565:
-            format = PAX_BUF_16_565RGB;
-            break;
-        case LCD_COLOR_PIXEL_FORMAT_RGB888:
-            format = PAX_BUF_24_888RGB;
-            break;
-        default:
-            break;
-    }
-
-    // Convert BSP display rotation format into PAX orientation type
-    bsp_display_rotation_t display_rotation = bsp_display_get_default_rotation();
-    pax_orientation_t orientation = PAX_O_UPRIGHT;
-    switch (display_rotation) {
-        case BSP_DISPLAY_ROTATION_90:
-            orientation = PAX_O_ROT_CCW;
-            break;
-        case BSP_DISPLAY_ROTATION_180:
-            orientation = PAX_O_ROT_HALF;
-            break;
-        case BSP_DISPLAY_ROTATION_270:
-            orientation = PAX_O_ROT_CW;
-            break;
-        case BSP_DISPLAY_ROTATION_0:
-        default:
-            orientation = PAX_O_UPRIGHT;
-            break;
-    }
-
-        // Initialize graphics stack
-#if defined(CONFIG_BSP_TARGET_KAMI)
-    // Temporary addition for supporting epaper devices (irrelevant for Tanmatsu)
-    format = PAX_BUF_2_PAL;
-#endif
-    pax_buf_init(&fb, NULL, display_h_res, display_v_res, format);
-    pax_buf_reversed(&fb, display_data_endian == LCD_RGB_DATA_ENDIAN_BIG);
-#if defined(CONFIG_BSP_TARGET_KAMI)
-    // Temporary addition for supporting epaper devices (irrelevant for Tanmatsu)
-    fb.palette      = palette;
-    fb.palette_size = sizeof(palette) / sizeof(pax_col_t);
-#endif
-    pax_buf_set_orientation(&fb, orientation);
-
-#if defined(CONFIG_BSP_TARGET_KAMI)
-#define BLACK 0
-#define WHITE 1
-#define RED   2
-#else
-#define BLACK 0xFF000000
-#define WHITE 0xFFFFFFFF
-#define RED   0xFFFF0000
-#endif
-
-    // Get input event queue from BSP
+    /* Input queue */
     ESP_ERROR_CHECK(bsp_input_get_queue(&input_event_queue));
 
-    // LEDs
-    bsp_led_set_pixel(0, 0xFF0000);  // Red
-    bsp_led_set_pixel(1, 0x00FF00);  // Green
-    bsp_led_set_pixel(2, 0x0000FF);  // Blue
-    bsp_led_set_pixel(3, 0xFFFF00);  // Yellow
-    bsp_led_set_pixel(4, 0x00FFFF);  // Magenta
-    bsp_led_set_pixel(5, 0xFF00FF);  // Cyan
-    bsp_led_send();                  // Send data to the coprocessor
-    bsp_led_set_mode(false);         // Take control over all LEDs by disabling automatic mode
+    /* Initialize PAX framebuffer */
+    pax_buf_init(&pax_framebuffer, NULL, display_h_res, display_v_res, PAX_BUF_24_888RGB);
+    pax_buf_reversed(&pax_framebuffer, display_data_endian == LCD_RGB_DATA_ENDIAN_BIG);
 
-    // Start WiFi stack (if your app does not require WiFi or BLE you can remove this section)
-    pax_background(&fb, WHITE);
-    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Connecting to radio...");
-    blit();
+    /* Splash screen */
+    pax_background(&pax_framebuffer, 0xFF000000);
+    pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
+    pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Mounting SD card...");
+    bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
 
-    if (wifi_remote_initialize() == ESP_OK) {
-
-        pax_background(&fb, WHITE);
-        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Starting WiFi stack...");
-        blit();
-        wifi_connection_init_stack();  // Start the Espressif WiFi stack
-
-        pax_background(&fb, WHITE);
-        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Connecting to WiFi network...");
-        blit();
-
-        if (wifi_connect_try_all() == ESP_OK) {
-            pax_background(&fb, WHITE);
-            pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Succesfully connected to WiFi network");
-            blit();
-        } else {
-            pax_background(&fb, RED);
-            pax_draw_text(&fb, WHITE, pax_font_sky_mono, 16, 0, 0, "Failed to connect to WiFi network");
-            blit();
-        }
-    } else {
-        bsp_power_set_radio_state(BSP_POWER_RADIO_STATE_OFF);
-        ESP_LOGE(TAG, "WiFi radio not responding, WiFi not available");
-        pax_background(&fb, RED);
-        pax_draw_text(&fb, WHITE, pax_font_sky_mono, 16, 0, 0, "WiFi unavailable");
-        blit();
+    /* Mount SD card */
+    res = sdcard_init();
+    if (res != ESP_OK) {
+        pax_background(&pax_framebuffer, 0xFFFF0000);
+        pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 16, 10, 10,
+                      "SD card mount failed!");
+        pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 16, 10, 30,
+                      "Please insert SD card with WAD files");
+        pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 16, 10, 50,
+                      "at /sd/apps/at.cavac.tadoom/ and reboot.");
+        bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+        vTaskDelay(portMAX_DELAY);
+        return;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(500));
+    pax_background(&pax_framebuffer, 0xFF000000);
+    pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
+    pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Starting DOOM engine...");
+    bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
 
-    // Main section of the app
+    /* Set up argc/argv for PrBoom */
+    static const char *doom_argv[] = {"tadoom", "-iwad", TADOOM_BASE_PATH "/doom1.wad", "-nosound", NULL};
+    myargc = 4;
+    myargv = doom_argv;
 
-    // This example shows how to read from the BSP event queue to read input events
+    /* Initialize PrBoom memory system */
+    Z_Init();
 
-    // If you want to run something at an interval in this same main thread you can replace portMAX_DELAY with an amount
-    // of ticks to wait, for example pdMS_TO_TICKS(1000)
+    /* Pre-init graphics (stores references for later) */
+    I_PreInitGraphics();
 
-    pax_background(&fb, WHITE);
-    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Welcome! Press any key to trigger an event.");
-    blit();
-
-    while (1) {
-        bsp_input_event_t event;
-        if (xQueueReceive(input_event_queue, &event, portMAX_DELAY) == pdTRUE) {
-            switch (event.type) {
-                case INPUT_EVENT_TYPE_KEYBOARD: {
-                    if (event.args_keyboard.ascii != '\b' ||
-                        event.args_keyboard.ascii != '\t') {  // Ignore backspace & tab keyboard events
-                        ESP_LOGI(TAG, "Keyboard event %c (%02x) %s", event.args_keyboard.ascii,
-                                 (uint8_t)event.args_keyboard.ascii, event.args_keyboard.utf8);
-                        pax_simple_rect(&fb, WHITE, 0, 0, pax_buf_get_width(&fb), 72);
-                        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 0, "Keyboard event");
-                        char text[64];
-                        snprintf(text, sizeof(text), "ASCII:     %c (0x%02x)", event.args_keyboard.ascii,
-                                 (uint8_t)event.args_keyboard.ascii);
-                        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 18, text);
-                        snprintf(text, sizeof(text), "UTF-8:     %s", event.args_keyboard.utf8);
-                        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 36, text);
-                        snprintf(text, sizeof(text), "Modifiers: 0x%0" PRIX32, event.args_keyboard.modifiers);
-                        pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 54, text);
-                        blit();
-                    }
-                    break;
-                }
-                case INPUT_EVENT_TYPE_NAVIGATION: {
-                    ESP_LOGI(TAG, "Navigation event %0" PRIX32 ": %s", (uint32_t)event.args_navigation.key,
-                             event.args_navigation.state ? "pressed" : "released");
-
-                    if (event.args_navigation.key == BSP_INPUT_NAVIGATION_KEY_F1) {
-                        bsp_device_restart_to_launcher();
-                    }
-                    if (event.args_navigation.key == BSP_INPUT_NAVIGATION_KEY_F2) {
-                        bsp_input_set_backlight_brightness(0);
-                    }
-                    if (event.args_navigation.key == BSP_INPUT_NAVIGATION_KEY_F3) {
-                        bsp_input_set_backlight_brightness(100);
-                    }
-
-                    pax_simple_rect(&fb, WHITE, 0, 100, pax_buf_get_width(&fb), 72);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 100 + 0, "Navigation event");
-                    char text[64];
-                    snprintf(text, sizeof(text), "Key:       0x%0" PRIX32, (uint32_t)event.args_navigation.key);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 100 + 18, text);
-                    snprintf(text, sizeof(text), "State:     %s", event.args_navigation.state ? "pressed" : "released");
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 100 + 36, text);
-                    snprintf(text, sizeof(text), "Modifiers: 0x%0" PRIX32, event.args_navigation.modifiers);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 100 + 54, text);
-                    blit();
-                    break;
-                }
-                case INPUT_EVENT_TYPE_ACTION: {
-                    ESP_LOGI(TAG, "Action event 0x%0" PRIX32 ": %s", (uint32_t)event.args_action.type,
-                             event.args_action.state ? "yes" : "no");
-                    pax_simple_rect(&fb, WHITE, 0, 200 + 0, pax_buf_get_width(&fb), 72);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 200 + 0, "Action event");
-                    char text[64];
-                    snprintf(text, sizeof(text), "Type:      0x%0" PRIX32, (uint32_t)event.args_action.type);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 200 + 36, text);
-                    snprintf(text, sizeof(text), "State:     %s", event.args_action.state ? "yes" : "no");
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 200 + 54, text);
-                    blit();
-                    break;
-                }
-                case INPUT_EVENT_TYPE_SCANCODE: {
-                    ESP_LOGI(TAG, "Scancode event 0x%0" PRIX32, (uint32_t)event.args_scancode.scancode);
-                    pax_simple_rect(&fb, WHITE, 0, 300 + 0, pax_buf_get_width(&fb), 72);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 300 + 0, "Scancode event");
-                    char text[64];
-                    snprintf(text, sizeof(text), "Scancode:  0x%0" PRIX32, (uint32_t)event.args_scancode.scancode);
-                    pax_draw_text(&fb, BLACK, pax_font_sky_mono, 16, 0, 300 + 36, text);
-                    blit();
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
+    /* Launch DOOM on a FreeRTOS task with large stack (in PSRAM, TCB in internal RAM) */
+    StaticTask_t *task_buf = heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL);
+    StackType_t *task_stack = heap_caps_malloc(65536, MALLOC_CAP_SPIRAM);
+    if (!task_buf || !task_stack) {
+        ESP_LOGE(TAG, "Failed to allocate doom task memory from PSRAM");
+        return;
     }
+    xTaskCreateStaticPinnedToCore(doom_task, "doom", 65536, NULL, 5,
+                                  task_stack, task_buf, 0);
 }
