@@ -1,8 +1,9 @@
-/* midi_player.c -- Minimal MIDI file sequencer for TinySoundFont */
+/* midi_player.c -- Minimal MIDI file sequencer for OPL music */
 
 #include <string.h>
 #include <stdlib.h>
 #include "midi_player.h"
+#include "opl_player.h"
 #include "esp_log.h"
 
 static const char *TAG = "midi_player";
@@ -26,6 +27,7 @@ static midi_track_t tracks[MAX_MIDI_TRACKS];
 static int num_tracks = 0;
 static int ticks_per_quarter = 120;
 static double us_per_tick = 500000.0 / 120.0; /* default 120 BPM */
+static int midi_sample_rate = 44100;
 static double samples_per_tick = 0;
 static double sample_counter = 0;
 static unsigned long current_tick = 0;
@@ -53,6 +55,11 @@ static uint32_t read_u32be(const uint8_t *p)
 {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) | p[3];
+}
+
+void midi_player_set_sample_rate(int rate)
+{
+    midi_sample_rate = rate;
 }
 
 void midi_player_init(void)
@@ -123,7 +130,7 @@ void midi_player_load(const uint8_t *data, int len, int looping)
     ESP_LOGI(TAG, "Loaded MIDI: %d tracks, %d ticks/quarter", num_tracks, ticks_per_quarter);
 }
 
-void midi_player_start(tsf *sf)
+void midi_player_start(void)
 {
     if (!midi_data_ptr || num_tracks == 0) return;
 
@@ -153,7 +160,7 @@ void midi_player_start(tsf *sf)
     current_tick = 0;
     sample_counter = 0;
     us_per_tick = 500000.0 / (double)ticks_per_quarter;
-    samples_per_tick = (us_per_tick / 1000000.0) * 22050.0;
+    samples_per_tick = (us_per_tick / 1000000.0) * (double)midi_sample_rate;
 
     midi_playing = 1;
 }
@@ -166,7 +173,7 @@ void midi_player_stop(void)
 }
 
 /* Process MIDI events at the current tick for a single track */
-static void process_track_events(tsf *sf, midi_track_t *track)
+static void process_track_events(midi_track_t *track)
 {
     static uint8_t running_status[MAX_MIDI_TRACKS];
     int track_idx = (int)(track - tracks);
@@ -193,7 +200,7 @@ static void process_track_events(tsf *sf, midi_track_t *track)
             if (track->pos + 2 > track->end) { track->finished = 1; break; }
             uint8_t note = track->pos[0];
             track->pos += 2;
-            tsf_channel_note_off(sf, channel, note);
+            opl_player_note_off(channel, note);
             break;
         }
         case 0x90: { /* Note On */
@@ -202,9 +209,9 @@ static void process_track_events(tsf *sf, midi_track_t *track)
             uint8_t vel = track->pos[1];
             track->pos += 2;
             if (vel == 0)
-                tsf_channel_note_off(sf, channel, note);
+                opl_player_note_off(channel, note);
             else
-                tsf_channel_note_on(sf, channel, note, vel / 127.0f);
+                opl_player_note_on(channel, note, vel);
             break;
         }
         case 0xA0: /* Aftertouch */
@@ -216,14 +223,14 @@ static void process_track_events(tsf *sf, midi_track_t *track)
             uint8_t ctrl = track->pos[0];
             uint8_t val = track->pos[1];
             track->pos += 2;
-            tsf_channel_midi_control(sf, channel, ctrl, val);
+            opl_player_control_change(channel, ctrl, val);
             break;
         }
         case 0xC0: { /* Program Change */
             if (track->pos + 1 > track->end) { track->finished = 1; break; }
             uint8_t prog = track->pos[0];
             track->pos += 1;
-            tsf_channel_set_presetnumber(sf, channel, prog, (channel == 9));
+            opl_player_program_change(channel, prog);
             break;
         }
         case 0xD0: /* Channel Pressure */
@@ -234,7 +241,7 @@ static void process_track_events(tsf *sf, midi_track_t *track)
             if (track->pos + 2 > track->end) { track->finished = 1; break; }
             int bend = track->pos[0] | (track->pos[1] << 7);
             track->pos += 2;
-            tsf_channel_set_pitchwheel(sf, channel, bend);
+            opl_player_pitch_bend(channel, bend);
             break;
         }
         case 0xF0: {
@@ -249,7 +256,7 @@ static void process_track_events(tsf *sf, midi_track_t *track)
                                      ((uint32_t)track->pos[1] << 8) |
                                      track->pos[2];
                     us_per_tick = (double)tempo / (double)ticks_per_quarter;
-                    samples_per_tick = (us_per_tick / 1000000.0) * 22050.0;
+                    samples_per_tick = (us_per_tick / 1000000.0) * (double)midi_sample_rate;
                 } else if (meta_type == 0x2F) {
                     /* End of Track */
                     track->pos += meta_len;
@@ -282,9 +289,9 @@ static void process_track_events(tsf *sf, midi_track_t *track)
     }
 }
 
-void midi_player_tick(tsf *sf, int sample_count)
+void midi_player_tick(int sample_count)
 {
-    if (!midi_playing || !sf) return;
+    if (!midi_playing) return;
 
     /* Convert samples to ticks and process events */
     sample_counter += sample_count;
@@ -296,7 +303,7 @@ void midi_player_tick(tsf *sf, int sample_count)
         int all_finished = 1;
         for (int i = 0; i < num_tracks; i++) {
             if (!tracks[i].finished) {
-                process_track_events(sf, &tracks[i]);
+                process_track_events(&tracks[i]);
                 if (!tracks[i].finished)
                     all_finished = 0;
             }
@@ -304,8 +311,8 @@ void midi_player_tick(tsf *sf, int sample_count)
 
         if (all_finished) {
             if (midi_looping && midi_data_ptr) {
-                tsf_note_off_all(sf);
-                midi_player_start(sf);
+                opl_player_all_notes_off();
+                midi_player_start();
                 return;
             } else {
                 midi_playing = 0;

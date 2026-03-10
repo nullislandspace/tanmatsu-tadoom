@@ -29,6 +29,7 @@
 #include "mmus2mid.h"
 
 #include "midi_player.h"
+#include "opl_player.h"
 
 static const char *TAG = "i_sound";
 
@@ -41,9 +42,7 @@ static boolean sound_inited = false;
 
 #define SAMPLECOUNT 256
 #define MAX_CHANNELS 32
-/* BSP hardcodes I2S to 44100 Hz (badge_bsp_audio.c ignores the rate
- * parameter).  Match that here so SFX pitch is correct. */
-#define AUDIO_SAMPLE_RATE 44100
+#define AUDIO_SAMPLE_RATE 22050
 
 int snd_samplerate = AUDIO_SAMPLE_RATE;
 
@@ -75,18 +74,8 @@ static i2s_chan_handle_t i2s_handle = NULL;
 
 /* Music state */
 static boolean music_playing = false;
+static boolean music_enabled = false;
 static int music_volume = 15; /* 0-15 */
-
-/* TinySoundFont instance */
-#define TSF_IMPLEMENTATION
-#define TSF_MALLOC(sz)    heap_caps_malloc(sz, MALLOC_CAP_SPIRAM)
-#define TSF_REALLOC(p,sz) heap_caps_realloc(p, sz, MALLOC_CAP_SPIRAM)
-#define TSF_FREE(p)       heap_caps_free(p)
-#define TSF_MEMCPY        memcpy
-#define TSF_MEMSET        memset
-#include "tsf.h"
-
-static tsf *soundfont = NULL;
 
 /* MIDI data for current song */
 static uint8_t *current_midi_data = NULL;
@@ -316,11 +305,20 @@ static void audio_task(void *arg)
         I_MixSound(mix_buffer, SAMPLECOUNT);
         xSemaphoreGive(audio_mutex);
 
-        /* Mix music from TinySoundFont */
-        if (music_playing && soundfont) {
-            midi_player_tick(soundfont, SAMPLECOUNT);
-            memset(music_buffer, 0, sizeof(music_buffer));
-            tsf_render_short(soundfont, music_buffer, SAMPLECOUNT, 0);
+        /* Mix music from OPL synthesizer */
+        if (music_playing && music_enabled) {
+            int64_t t0 = esp_timer_get_time();
+            midi_player_tick(SAMPLECOUNT);
+            int64_t t1 = esp_timer_get_time();
+            opl_player_render(music_buffer, SAMPLECOUNT);
+            int64_t t2 = esp_timer_get_time();
+
+            static int diag_cnt = 0;
+            if (++diag_cnt >= 200) {
+                ESP_LOGI(TAG, "midi_tick=%lld us, opl_render=%lld us",
+                         (long long)(t1 - t0), (long long)(t2 - t1));
+                diag_cnt = 0;
+            }
 
             /* Mix music into SFX buffer with volume scaling */
             float vol_scale = (float)music_volume / 15.0f;
@@ -349,9 +347,15 @@ void I_InitSound(void)
     /* Create audio mutex */
     audio_mutex = xSemaphoreCreateMutex();
 
-    /* Initialize audio hardware via BSP */
+    /* Initialize audio hardware via BSP.
+     * bsp_audio_initialize() hardcodes I2S to 44100 Hz and enables the
+     * channel.  To reconfigure the clock we must disable the channel
+     * first, set the new rate, then re-enable. */
     bsp_audio_initialize(AUDIO_SAMPLE_RATE);
     bsp_audio_get_i2s_handle(&i2s_handle);
+    i2s_channel_disable(i2s_handle);
+    bsp_audio_set_rate(AUDIO_SAMPLE_RATE);
+    i2s_channel_enable(i2s_handle);
     bsp_audio_set_amplifier(true);
     bsp_audio_set_volume(80);
 
@@ -380,42 +384,54 @@ void I_ShutdownSound(void)
 }
 
 /*
- * MUSIC API
+ * MUSIC API -- OPL2 FM synthesis using GENMIDI lump from WAD
  */
 
 void I_InitMusic(void)
 {
-    const char *sf2_path = TADOOM_BASE_PATH "/gm.sf2";
+    lprintf(LO_INFO, "I_InitMusic: Initializing OPL music\n");
 
-    lprintf(LO_INFO, "I_InitMusic: Loading SoundFont from %s\n", sf2_path);
+    /* Initialize OPL synthesizer */
+    opl_player_init(AUDIO_SAMPLE_RATE);
 
-    soundfont = tsf_load_filename(sf2_path);
-    if (!soundfont) {
-        lprintf(LO_WARN, "I_InitMusic: Failed to load SoundFont, music disabled\n");
+    /* Load GENMIDI lump from WAD */
+    int lump = W_CheckNumForName("GENMIDI");
+    if (lump < 0) {
+        lprintf(LO_WARN, "I_InitMusic: GENMIDI lump not found, music disabled\n");
         return;
     }
 
-    tsf_set_output(soundfont, TSF_STEREO_INTERLEAVED, AUDIO_SAMPLE_RATE, 0.0f);
+    const void *data = W_LockLumpNum(lump);
+    int len = W_LumpLength(lump);
+
+    if (opl_player_load_genmidi(data, len) < 0) {
+        lprintf(LO_WARN, "I_InitMusic: Failed to load GENMIDI\n");
+        W_UnlockLumpNum(lump);
+        return;
+    }
+
+    /* Keep GENMIDI lump locked -- opl_player holds a direct pointer */
+
+    midi_player_set_sample_rate(AUDIO_SAMPLE_RATE);
     midi_player_init();
 
-    lprintf(LO_INFO, "I_InitMusic: SoundFont loaded successfully\n");
+    music_enabled = true;
+    lprintf(LO_INFO, "I_InitMusic: OPL music ready\n");
 }
 
 void I_ShutdownMusic(void)
 {
     music_playing = false;
-    if (soundfont) {
-        tsf_close(soundfont);
-        soundfont = NULL;
-    }
+    music_enabled = false;
+    opl_player_shutdown();
 }
 
 void I_PlaySong(int handle, int looping)
 {
-    if (!soundfont || !current_midi_data) return;
+    if (!music_enabled || !current_midi_data) return;
 
     midi_player_load(current_midi_data, current_midi_len, looping);
-    midi_player_start(soundfont);
+    midi_player_start();
     music_playing = true;
 }
 
@@ -426,15 +442,14 @@ void I_PauseSong(int handle)
 
 void I_ResumeSong(int handle)
 {
-    if (soundfont && current_midi_data)
+    if (music_enabled && current_midi_data)
         music_playing = true;
 }
 
 void I_StopSong(int handle)
 {
     music_playing = false;
-    if (soundfont)
-        tsf_note_off_all(soundfont);
+    opl_player_all_notes_off();
     midi_player_stop();
 }
 
@@ -451,7 +466,7 @@ int I_RegisterSong(const void *data, size_t len)
 {
     if (len < 32)
         return 0;
-    if (!soundfont)
+    if (!music_enabled)
         return 0;
 
     /* Free previous MIDI data */

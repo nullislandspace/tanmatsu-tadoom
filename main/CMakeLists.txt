@@ -16,6 +16,8 @@ set(TANMATSU_SOURCES
     i_joy_tanmatsu.c
     i_network_tanmatsu.c
     midi_player.c
+    opl_player.c
+    opl2.c
     sdcard.c
     fastopen.c
 )
@@ -37,12 +39,16 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         "prboom"
-        "lib"
 )
 
 # Suppress warnings on PrBoom sources (old C89 code)
 set_source_files_properties(${PRBOOM_SOURCES} PROPERTIES COMPILE_OPTIONS
     "-Wno-error;-Wno-all;-Wno-implicit-function-declaration;-Wno-int-conversion;-Wno-pointer-sign;-Wno-unused-variable;-Wno-format;-Wno-missing-braces;-Wno-incompatible-pointer-types;-Wno-unused-but-set-variable;-Wno-shift-negative-value"
+)
+
+# Suppress warnings on OPL2 emulator
+set_source_files_properties(opl2.c PROPERTIES COMPILE_OPTIONS
+    "-Wno-error;-Wno-all;-Wno-unused-variable;-Wno-unused-parameter"
 )
 
 # Force all prboom sources to include config.h (some don't check HAVE_CONFIG_H)
