@@ -212,6 +212,18 @@ void D_Display (void)
   boolean wipe;
   boolean viewactive = false, isborder = false;
 
+#if 0 /* DIAG: corruption debugging - disabled, root cause found (boolean size mismatch) */
+  {
+    static int diag_frame = 0;
+    if (ST_ValidatePatches()) {
+      lprintf(LO_ERROR, "DIAG: Corruption detected at frame %d, gametic=%d, gamestate=%d\n",
+              diag_frame, gametic, gamestate);
+      I_Error("DIAG: patchnum_t corruption caught in D_Display");
+    }
+    diag_frame++;
+  }
+#endif
+
   if (nodrawers)                    // for comparative timing / profiling
     return;
 

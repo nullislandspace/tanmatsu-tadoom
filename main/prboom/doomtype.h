@@ -41,14 +41,13 @@
 
 #ifndef __BYTEBOOL__
 #define __BYTEBOOL__
-/* Fixed to use builtin bool type with C++. */
-#ifdef __cplusplus
-typedef bool boolean;
-#else
-  /* Use C99 _Bool to avoid conflicts with stdbool.h (ESP-IDF) */
-  #include <stdbool.h>
-  typedef _Bool boolean;
-#endif
+/* PrBoom assumes boolean is 4 bytes (original was enum {false,true}).
+ * Status bar widgets store int* pointers to boolean fields (e.g.
+ * plyr->weaponowned[]), so boolean MUST be sizeof(int).
+ * Using _Bool (1 byte) caused reads of 4 bytes from 1-byte fields,
+ * picking up adjacent garbage and causing out-of-bounds array access. */
+#include <stdbool.h>
+typedef int boolean;
 typedef unsigned char byte;
 #endif
 

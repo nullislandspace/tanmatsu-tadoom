@@ -41,6 +41,7 @@
 #include "lprintf.h"
 #include "r_patch.h"
 #include <assert.h>
+#include <stdint.h>
 
 // posts are runs of non masked source pixels
 typedef struct
@@ -672,9 +673,17 @@ const rpatch_t *R_CachePatchNum(int id) {
   if (!patches)
     I_Error("R_CachePatchNum: Patches not initialized");
 
-#ifdef RANGECHECK
-  if (id >= numlumps)
-    I_Error("createPatch: %i >= numlumps", id);
+#if 0 /* DIAG: corruption debugging - disabled, root cause found (boolean size mismatch) */
+  if (id < 0 || id >= numlumps) {
+    void *ra = __builtin_return_address(0);
+    void *ra2 = __builtin_return_address(1);
+    lprintf(LO_ERROR, "R_CachePatchNum: id %d out of range (numlumps=%d), patches=%p\n", id, numlumps, patches);
+    lprintf(LO_ERROR, "  caller=%p caller2=%p\n", ra, ra2);
+    assert(0 && "R_CachePatchNum: corrupt id");
+  }
+
+  if ((uintptr_t)patches < 0x40000000u)
+    I_Error("R_CachePatchNum: patches pointer corrupt: %p (id=%d)", patches, id);
 #endif
 
   if (!patches[id].data)

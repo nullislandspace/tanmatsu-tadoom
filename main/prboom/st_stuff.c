@@ -47,6 +47,7 @@
 #include "sounds.h"
 #include "dstrings.h"
 #include "r_draw.h"
+#include "lprintf.h"
 
 //
 // STATUS BAR DATA
@@ -1158,3 +1159,53 @@ void ST_Init(void)
   veryfirsttime = 0;
   ST_loadData();
 }
+
+#if 0 /* DIAG: corruption debugging - disabled, root cause found (boolean size mismatch) */
+/* Validate all patchnum_t variables in st_stuff.c BSS.
+ * Reports first corrupt entry with name, index, address, and value.
+ * Returns 0 if all OK, 1 if corruption found. */
+int ST_ValidatePatches(void)
+{
+  int i, j;
+
+#define CHECK_PATCH(name, arr, count) \
+  for (i = 0; i < (count); i++) { \
+    if ((arr)[i].lumpnum < 0 || (arr)[i].lumpnum >= numlumps) { \
+      lprintf(LO_ERROR, "CORRUPT: %s[%d].lumpnum = %d (numlumps=%d) addr=%p\n", \
+              name, i, (arr)[i].lumpnum, numlumps, (void*)&(arr)[i].lumpnum); \
+      return 1; \
+    } \
+  }
+
+  CHECK_PATCH("tallnum", tallnum, 10)
+  CHECK_PATCH("shortnum", shortnum, 10)
+  CHECK_PATCH("keys", keys, NUMCARDS+3)
+  CHECK_PATCH("faces", faces, ST_NUMFACES)
+  CHECK_PATCH("arms", arms[0], 12)  /* 6x2 flat */
+
+  /* Single patches */
+  if (tallpercent.lumpnum < 0 || tallpercent.lumpnum >= numlumps) {
+    lprintf(LO_ERROR, "CORRUPT: tallpercent.lumpnum = %d addr=%p\n",
+            tallpercent.lumpnum, (void*)&tallpercent.lumpnum);
+    return 1;
+  }
+  if (faceback.lumpnum < 0 || faceback.lumpnum >= numlumps) {
+    lprintf(LO_ERROR, "CORRUPT: faceback.lumpnum = %d addr=%p\n",
+            faceback.lumpnum, (void*)&faceback.lumpnum);
+    return 1;
+  }
+  if (stbarbg.lumpnum < 0 || stbarbg.lumpnum >= numlumps) {
+    lprintf(LO_ERROR, "CORRUPT: stbarbg.lumpnum = %d addr=%p\n",
+            stbarbg.lumpnum, (void*)&stbarbg.lumpnum);
+    return 1;
+  }
+  if (armsbg.lumpnum < 0 || armsbg.lumpnum >= numlumps) {
+    lprintf(LO_ERROR, "CORRUPT: armsbg.lumpnum = %d addr=%p\n",
+            armsbg.lumpnum, (void*)&armsbg.lumpnum);
+    return 1;
+  }
+
+#undef CHECK_PATCH
+  return 0;
+}
+#endif

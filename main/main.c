@@ -155,19 +155,37 @@ void app_main(void)
     /* Input queue */
     ESP_ERROR_CHECK(bsp_input_get_queue(&input_event_queue));
 
-    /* Initialize PAX framebuffer */
-    pax_buf_init(&pax_framebuffer, NULL, display_h_res, display_v_res, PAX_BUF_24_888RGB);
+    /* Initialize PAX framebuffer with cache-aligned, DMA-safe memory.
+     * DMA2D reads this buffer for display; without alignment, cache
+     * sync operations can corrupt adjacent heap allocations. */
+    size_t fb_size = display_h_res * display_v_res * 3; /* RGB888 */
+    void *fb_mem = heap_caps_aligned_alloc(64, fb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (!fb_mem) {
+        ESP_LOGE(TAG, "Failed to allocate DMA-safe framebuffer (%u bytes)", (unsigned)fb_size);
+        return;
+    }
+    memset(fb_mem, 0, fb_size);
+    pax_buf_init(&pax_framebuffer, fb_mem, display_h_res, display_v_res, PAX_BUF_24_888RGB);
     pax_buf_reversed(&pax_framebuffer, display_data_endian == LCD_RGB_DATA_ENDIAN_BIG);
 
-    /* Splash screen */
-    pax_background(&pax_framebuffer, 0xFF000000);
-    pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
-    pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Mounting SD card...");
-    bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+    /* FIX2-BEGIN: Splash blits disabled to avoid DMA2D activity during init.
+     * DMA2D transfers overlap with heavy heap allocation in R_Init/P_SetupLevel,
+     * risking cache coherency corruption. Re-enable once root cause is confirmed
+     * fixed by the DMA-safe framebuffer allocation (Fix 1) above.
+     *
+     * Original splash screen code:
+     *   pax_background(&pax_framebuffer, 0xFF000000);
+     *   pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
+     *   pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Mounting SD card...");
+     *   bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+     * FIX2-END */
+    ESP_LOGI(TAG, "Mounting SD card...");
 
     /* Mount SD card */
     res = sdcard_init();
     if (res != ESP_OK) {
+        /* FIX2-BEGIN: Keep error blit - user needs to see this, and no heap
+         * activity follows since we halt with vTaskDelay(portMAX_DELAY). */
         pax_background(&pax_framebuffer, 0xFFFF0000);
         pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 16, 10, 10,
                       "SD card mount failed!");
@@ -176,14 +194,20 @@ void app_main(void)
         pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 16, 10, 50,
                       "at /sd/apps/at.cavac.tadoom/ and reboot.");
         bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+        /* FIX2-END */
         vTaskDelay(portMAX_DELAY);
         return;
     }
 
-    pax_background(&pax_framebuffer, 0xFF000000);
-    pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
-    pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Starting DOOM engine...");
-    bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+    /* FIX2-BEGIN: "Starting DOOM engine" splash disabled (see above).
+     *
+     * Original code:
+     *   pax_background(&pax_framebuffer, 0xFF000000);
+     *   pax_draw_text(&pax_framebuffer, 0xFFFFFFFF, pax_font_sky_mono, 24, 10, 10, "TaDOOM v0.1.0");
+     *   pax_draw_text(&pax_framebuffer, 0xFFCCCCCC, pax_font_sky_mono, 16, 10, 40, "Starting DOOM engine...");
+     *   bsp_display_blit(0, 0, display_h_res, display_v_res, pax_buf_get_pixels(&pax_framebuffer));
+     * FIX2-END */
+    ESP_LOGI(TAG, "Starting DOOM engine...");
 
     /* Set up argc/argv for PrBoom */
     static const char *doom_argv[] = {"tadoom", "-iwad", TADOOM_BASE_PATH "/doom1.wad", "-nosound", NULL};

@@ -106,9 +106,10 @@ typedef enum {
 // allows us to avoid the overhead of dynamic allocation
 // when multiple screen sizes are supported
 
-// proff 08/17/98: Changed for high-res
-#define MAX_SCREENWIDTH  2048
-#define MAX_SCREENHEIGHT 1536
+// Tanmatsu: reduced from 2048/1536 to match 320x200 render resolution.
+// Saves ~110KB BSS and ~16KB stack per R_DrawSprite call.
+#define MAX_SCREENWIDTH  320
+#define MAX_SCREENHEIGHT 200
 
 // SCREENWIDTH and SCREENHEIGHT define the visible size
 extern int SCREENWIDTH;

@@ -490,6 +490,22 @@ static void V_DrawMemPatch(int x, int y, int scrn, const rpatch_t *patch,
 static void FUNC_V_DrawNumPatch(int x, int y, int scrn, int lump,
          int cm, enum patch_translation_e flags)
 {
+#if 0 /* DIAG: corruption debugging - disabled, root cause found (boolean size mismatch) */
+  extern int numlumps;
+  if (lump < 0 || lump >= numlumps) {
+    lprintf(LO_ERROR, "FUNC_V_DrawNumPatch: bad lump=%d (0x%08x) x=%d y=%d scrn=%d cm=%d flags=%d\n",
+            lump, lump, x, y, scrn, cm, (int)flags);
+    lprintf(LO_ERROR, "  &lump on stack=%p, caller=%p\n",
+            (void*)&lump, __builtin_return_address(0));
+    unsigned int *scan;
+    unsigned int target = (unsigned int)lump;
+    for (scan = (unsigned int*)0x4ff44000; scan < (unsigned int*)0x4ff99000; scan++) {
+      if (*scan == target) {
+        lprintf(LO_ERROR, "  Found 0x%08x at BSS addr %p\n", target, (void*)scan);
+      }
+    }
+  }
+#endif
   V_DrawMemPatch(x, y, scrn, R_CachePatchNum(lump), cm, flags);
   R_UnlockPatchNum(lump);
 }

@@ -298,8 +298,15 @@ void STlib_updateMultIcon
 
       V_CopyRect(x, y-ST_Y, BG, w, h, x, y, FG, VPT_STRETCH);
     }
-    if (*mi->inum != -1)  // killough 2/16/98: redraw only if != -1
+    if (*mi->inum != -1) {  // killough 2/16/98: redraw only if != -1
+#if 0 /* DIAG: corruption debugging - disabled, root cause found (boolean size mismatch) */
+      if (*mi->inum < -1 || *mi->inum > 256) {
+        lprintf(LO_ERROR, "DIAG updateMultIcon: *mi->inum=%d mi->inum=%p mi->p=%p mi->x=%d mi->y=%d\n",
+                *mi->inum, (void*)mi->inum, (void*)mi->p, mi->x, mi->y);
+      }
+#endif
       V_DrawNumPatch(mi->x, mi->y, FG, mi->p[*mi->inum].lumpnum, CR_DEFAULT, VPT_STRETCH);
+    }
     mi->oldinum = *mi->inum;
   }
 }

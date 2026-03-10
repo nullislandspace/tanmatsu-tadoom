@@ -69,6 +69,10 @@ void ST_Start(void);
 // Called by startup code.
 void ST_Init(void);
 
+#if 0 /* DIAG: disabled, root cause found (boolean size mismatch) */
+int ST_ValidatePatches(void);
+#endif
+
 // States for status bar code.
 typedef enum
 {
