@@ -31,7 +31,7 @@
 #include "lprintf.h"
 #include "m_argv.h"
 
-#include "hid_keyboard.h"
+#include "hidhost.h"
 
 static const char *TAG = "i_video";
 

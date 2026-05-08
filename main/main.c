@@ -39,7 +39,7 @@
 #include "i_main.h"
 #include "r_fps.h"
 
-#include "hid_keyboard.h"
+#include "hidhost.h"
 
 static const char *TAG = "tadoom";
 
@@ -77,7 +77,7 @@ int (*I_GetTime)(void) = I_GetTime_Error;
 
 void I_Init(void)
 {
-    hid_kbd_init();
+    hid_init();
     if (fastdemo)
         I_GetTime = I_GetTime_FastDemo;
     else if (realtic_clock_rate != 100) {

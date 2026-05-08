@@ -472,10 +472,10 @@ void hid_host_device_callback(hid_host_device_handle_t hid_device_handle,
 
 /* --- Public API --- */
 
-esp_err_t hid_kbd_init(void)
+esp_err_t hid_init(void)
 {
     BaseType_t task_created;
-    ESP_LOGI(TAG, "hid_kbd_start");
+    ESP_LOGI(TAG, "hid_init");
 
     bsp_power_set_usb_host_boost_enabled(true);
 
