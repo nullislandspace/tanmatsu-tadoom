@@ -30,6 +30,7 @@ idf_component_register(
         esp_lcd
         fatfs
         nvs_flash
+        hidhost
         badge-bsp
         esp_timer
         driver

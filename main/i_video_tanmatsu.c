@@ -31,6 +31,8 @@
 #include "lprintf.h"
 #include "m_argv.h"
 
+#include "hidhost.h"
+
 static const char *TAG = "i_video";
 
 /* Globals expected by PrBoom */
@@ -358,6 +360,7 @@ void I_StartTic(void)
 {
     bsp_input_event_t bsp_event;
 
+    handle_hid_events();
     while (xQueueReceive(input_event_queue, &bsp_event, 0) == pdTRUE) {
         if (bsp_event.type == INPUT_EVENT_TYPE_SCANCODE) {
             uint32_t sc = (uint32_t)bsp_event.args_scancode.scancode;

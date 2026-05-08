@@ -39,6 +39,8 @@
 #include "i_main.h"
 #include "r_fps.h"
 
+#include "hidhost.h"
+
 static const char *TAG = "tadoom";
 
 /* Display state - shared with i_video_tanmatsu.c */
@@ -75,6 +77,7 @@ int (*I_GetTime)(void) = I_GetTime_Error;
 
 void I_Init(void)
 {
+    hid_init();
     if (fastdemo)
         I_GetTime = I_GetTime_FastDemo;
     else if (realtic_clock_rate != 100) {
@@ -226,6 +229,6 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to allocate doom task memory from PSRAM");
         return;
     }
-    xTaskCreateStaticPinnedToCore(doom_task, "doom", 65536, NULL, 5,
+    xTaskCreateStaticPinnedToCore(doom_task, "doom", 65536, NULL, 1,
                                   task_stack, task_buf, 0);
 }
