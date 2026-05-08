@@ -1,4 +1,5 @@
 PORT ?= /dev/ttyACM0
+BADGELINKPORT ?= $(PORT)
 
 IDF_PATH ?= $(shell cat .IDF_PATH 2>/dev/null || echo `pwd`/esp-idf)
 IDF_TOOLS_PATH ?= $(shell cat .IDF_TOOLS_PATH 2>/dev/null || echo `pwd`/esp-idf-tools)
@@ -56,14 +57,35 @@ badgelink:
 	git clone https://github.com/badgeteam/esp32-component-badgelink.git badgelink
 	cd badgelink/tools; ./install.sh
 
+# Determine badgelink connection argument: --tcp for host:port, --port for serial devices
+BADGELINK_CONN := $(if $(findstring :,$(BADGELINKPORT)),--tcp $(BADGELINKPORT),--port $(BADGELINKPORT))
+
 .PHONY: install
 install: build
 install:
-	cd badgelink/tools; ./badgelink.sh appfs upload tanmatsu-tadoom "TaDoom" 0 ../../$(BUILD)/tanmatsu-tadoom.bin
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) appfs upload tanmatsu-tadoom "TaDoom" 0 ../../$(BUILD)/tanmatsu-tadoom.bin
 
 .PHONY: run
 run:
-	cd badgelink/tools; ./badgelink.sh start tanmatsu-tadoom
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) start tanmatsu-tadoom
+
+# App repository
+
+APP_SLUG_NAME ?= at.cavac.tadoom
+APP_REPO_PATH ?= ../tanmatsu-app-repository/$(APP_SLUG_NAME)
+
+.PHONY: apprepo
+apprepo: build
+	@echo "=== Updating app repository ==="
+	mkdir -p $(APP_REPO_PATH)
+	cp metadata/metadata.json $(APP_REPO_PATH)/metadata.json
+	cp metadata/icon16.png $(APP_REPO_PATH)/icon16.png
+	cp metadata/icon32.png $(APP_REPO_PATH)/icon32.png
+	cp metadata/icon64.png $(APP_REPO_PATH)/icon64.png
+	cp metadata/doom1.wad $(APP_REPO_PATH)/doom1.wad
+	cp metadata/prboom.wad $(APP_REPO_PATH)/prboom.wad
+	cp $(BUILD)/tanmatsu-tadoom.bin $(APP_REPO_PATH)/tanmatsu-tadoom.bin
+	@echo "=== App repository updated at $(APP_REPO_PATH) ==="
 
 # Preparation
 
