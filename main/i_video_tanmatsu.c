@@ -361,6 +361,8 @@ void I_StartTic(void)
     bsp_input_event_t bsp_event;
 
     handle_hid_events();
+    /* A gamepad has nothing to inject into the BSP queue, so it is polled here instead. */
+    I_PollJoystick();
     while (xQueueReceive(input_event_queue, &bsp_event, 0) == pdTRUE) {
         if (bsp_event.type == INPUT_EVENT_TYPE_SCANCODE) {
             uint32_t sc = (uint32_t)bsp_event.args_scancode.scancode;
