@@ -46,7 +46,7 @@ int leds_always_off = 0;
 /* External state from main.c */
 extern size_t display_h_res;
 extern size_t display_v_res;
-extern lcd_rgb_data_endian_t display_data_endian;
+extern bsp_display_endianness_t display_data_endian;
 extern pax_buf_t pax_framebuffer;
 extern QueueHandle_t input_event_queue;
 
