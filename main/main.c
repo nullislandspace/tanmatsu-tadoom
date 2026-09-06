@@ -46,8 +46,8 @@ static const char *TAG = "tadoom";
 /* Display state - shared with i_video_tanmatsu.c */
 size_t display_h_res = 0;
 size_t display_v_res = 0;
-lcd_color_rgb_pixel_format_t display_color_format = LCD_COLOR_PIXEL_FORMAT_RGB888;
-lcd_rgb_data_endian_t display_data_endian = LCD_RGB_DATA_ENDIAN_LITTLE;
+bsp_display_color_format_t display_color_format = BSP_DISPLAY_COLOR_FORMAT_24_888RGB;
+bsp_display_endianness_t display_data_endian = BSP_DISPLAY_ENDIAN_LITTLE;
 pax_buf_t pax_framebuffer = {0};
 QueueHandle_t input_event_queue = NULL;
 
@@ -135,7 +135,7 @@ void app_main(void)
     /* BSP initialization with RGB888 display */
     const bsp_configuration_t bsp_config = {
         .display = {
-            .requested_color_format = LCD_COLOR_PIXEL_FORMAT_RGB888,
+            .requested_color_format = BSP_DISPLAY_COLOR_FORMAT_24_888RGB,
             .num_fbs = 1,
         },
     };
@@ -168,7 +168,7 @@ void app_main(void)
     }
     memset(fb_mem, 0, fb_size);
     pax_buf_init(&pax_framebuffer, fb_mem, display_h_res, display_v_res, PAX_BUF_24_888RGB);
-    pax_buf_reversed(&pax_framebuffer, display_data_endian == LCD_RGB_DATA_ENDIAN_BIG);
+    pax_buf_reversed(&pax_framebuffer, display_data_endian == BSP_DISPLAY_ENDIAN_BIG);
 
     /* FIX2-BEGIN: Splash blits disabled to avoid DMA2D activity during init.
      * DMA2D transfers overlap with heavy heap allocation in R_Init/P_SetupLevel,
