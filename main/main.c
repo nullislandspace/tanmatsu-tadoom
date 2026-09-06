@@ -27,6 +27,7 @@
 #include "m_argv.h"
 #include "d_main.h"
 #include "m_fixed.h"
+#include "i_joy.h"
 #include "i_system.h"
 #include "i_video.h"
 #include "z_zone.h"
@@ -78,6 +79,7 @@ int (*I_GetTime)(void) = I_GetTime_Error;
 void I_Init(void)
 {
     hid_init();
+    I_InitJoystick();
     if (fastdemo)
         I_GetTime = I_GetTime_FastDemo;
     else if (realtic_clock_rate != 100) {

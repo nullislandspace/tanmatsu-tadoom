@@ -16,7 +16,7 @@
 - [x] main/i_video_tanmatsu.c (display + input)
 - [x] main/i_sound_tanmatsu.c (SFX + music)
 - [x] main/midi_player.c/.h (MIDI sequencer)
-- [x] main/i_joy_tanmatsu.c (stub)
+- [x] main/i_joy_tanmatsu.c (USB HID gamepad)
 - [x] main/i_network_tanmatsu.c (stub)
 
 ### Phase 3: Source Patches
