@@ -1,5 +1,9 @@
 dependencies:
   idf: ">=5.5.1"
-  badgeteam/badge-bsp: "^0.9.2"
-  robotman2412/pax-gfx: "^2.0.6"
-  hfmanson/hidhost: "^1.0.0"
+  # Exact pins: this project is frozen on ESP-IDF 5.5.x (see idf6_sd_fuckup.md).
+  # badge-bsp 0.9.9 switched bsp_display_get_parameters() to
+  # bsp_display_color_format_t / bsp_display_endianness_t; the port follows it
+  # as of PR #3, so this must stay at 0.9.9 or later.
+  badgeteam/badge-bsp: "=0.9.9"
+  robotman2412/pax-gfx: "=2.2.2"
+  hfmanson/hidhost: "=1.0.0"

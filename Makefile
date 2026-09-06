@@ -60,19 +60,39 @@ badgelink:
 # Determine badgelink connection argument: --tcp for host:port, --port for serial devices
 BADGELINK_CONN := $(if $(findstring :,$(BADGELINKPORT)),--tcp $(BADGELINKPORT),--port $(BADGELINKPORT))
 
+APP_SLUG ?= at.cavac.tadoom
+APPFS_SLUG ?= tanmatsu-tadoom
+APP_INSTALL_BASE_PATH ?= /sd/apps/
+APP_INSTALL_PATH = $(APP_INSTALL_BASE_PATH)$(APP_SLUG)
+
 .PHONY: install
 install: build
-install:
-	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) appfs upload tanmatsu-tadoom "TaDoom" 0 ../../$(BUILD)/tanmatsu-tadoom.bin
+	@echo "=== Installing application ==="
+	@echo "Uploading tanmatsu-tadoom.bin to AppFS as $(APPFS_SLUG)..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) appfs upload $(APPFS_SLUG) "TaDoom" 0 ../../$(BUILD)/tanmatsu-tadoom.bin
+	@echo "Creating directory $(APP_INSTALL_PATH)..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs mkdir $(APP_INSTALL_PATH) || true
+	@echo "Uploading metadata.json..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/metadata.json ../../metadata/metadata.json
+	@echo "Uploading icon16.png..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/icon16.png ../../metadata/icon16.png
+	@echo "Uploading icon32.png..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/icon32.png ../../metadata/icon32.png
+	@echo "Uploading icon64.png..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/icon64.png ../../metadata/icon64.png
+	@echo "Uploading prboom.wad..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/prboom.wad ../../metadata/prboom.wad
+	@echo "Uploading doom1.wad (this takes a while)..."
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) fs upload $(APP_INSTALL_PATH)/doom1.wad ../../metadata/doom1.wad
+	@echo "=== Installation complete ==="
 
 .PHONY: run
 run:
-	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) start tanmatsu-tadoom
+	cd badgelink/tools; ./badgelink.sh $(BADGELINK_CONN) start $(APPFS_SLUG)
 
 # App repository
 
-APP_SLUG_NAME ?= at.cavac.tadoom
-APP_REPO_PATH ?= ../tanmatsu-app-repository/$(APP_SLUG_NAME)
+APP_REPO_PATH ?= ../tanmatsu-app-repository/$(APP_SLUG)
 
 .PHONY: apprepo
 apprepo: build
